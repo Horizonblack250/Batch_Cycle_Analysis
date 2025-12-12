@@ -104,61 +104,65 @@ def calculate_ramp_up_metrics(batch_df):
     Calculates steam consumption during ramp-up.
     Logic: Ramp-up ends when process is +-1 degree of SP for > 1 minute.
     """
-    # Sort to be safe
-    batch_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
+    # Create a local copy, sort, and reset index to ensure clean calculations
+    # internal to this function
+    local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
     
     # Calculate dt in hours for steam integration (kg/hr * hr = kg)
     # Using shift to get time difference from previous row
-    batch_df['dt_hours'] = batch_df['Timestamp'].diff().dt.total_seconds() / 3600.0
-    batch_df['dt_hours'] = batch_df['dt_hours'].fillna(0) # First row is 0
+    local_df['dt_hours'] = local_df['Timestamp'].diff().dt.total_seconds() / 3600.0
+    local_df['dt_hours'] = local_df['dt_hours'].fillna(0) # First row is 0
     
     # Calculate incremental steam consumption per row
-    batch_df['steam_kg_incremental'] = batch_df['Steam Flow Rate'] * batch_df['dt_hours']
+    local_df['steam_kg_incremental'] = local_df['Steam Flow Rate'] * local_df['dt_hours']
     
     # --- FIND STABLE START TIME ---
     # 1. Calculate Error
-    batch_df['sp_error'] = (batch_df['Process Temp'] - batch_df['Process Temp SP']).abs()
+    local_df['sp_error'] = (local_df['Process Temp'] - local_df['Process Temp SP']).abs()
     
     # 2. Check threshold
-    batch_df['in_range'] = batch_df['sp_error'] <= 1.0
+    local_df['in_range'] = local_df['sp_error'] <= 1.0
     
     # 3. Find blocks of 'in_range'
     # Create groups of consecutive True/False
-    batch_df['block'] = (batch_df['in_range'] != batch_df['in_range'].shift()).cumsum()
+    local_df['block'] = (local_df['in_range'] != local_df['in_range'].shift()).cumsum()
     
     stable_start_idx = None
+    stable_timestamp = None
     
     # Filter only for blocks that are IN RANGE
-    in_range_blocks = batch_df[batch_df['in_range']].groupby('block')
+    in_range_blocks = local_df[local_df['in_range']].groupby('block')
     
     for block_id, group in in_range_blocks:
         duration_min = (group['Timestamp'].max() - group['Timestamp'].min()).total_seconds() / 60.0
         # Check if this stable block lasts > 1 minute (as per requirement)
         if duration_min >= 1.0:
             stable_start_idx = group.index[0]
+            # Grab the actual timestamp while we are inside the valid local dataframe
+            stable_timestamp = group.loc[stable_start_idx, 'Timestamp']
             break
             
     # --- CALCULATE CONSUMPTION ---
-    if stable_start_idx is not None and stable_start_idx > 0:
+    if stable_start_idx is not None:
         # Ramp Up is from index 0 to stable_start_idx
-        ramp_up_df = batch_df.iloc[:stable_start_idx+1]
+        ramp_up_df = local_df.iloc[:stable_start_idx+1]
         ramp_steam_kg = ramp_up_df['steam_kg_incremental'].sum()
         ramp_duration_min = (ramp_up_df['Timestamp'].max() - ramp_up_df['Timestamp'].min()).total_seconds() / 60.0
         status = "Stabilized"
     else:
         # Never stabilized according to logic, or started stable
-        ramp_steam_kg = batch_df['steam_kg_incremental'].sum() # Assume all was ramp/unstable
-        ramp_duration_min = (batch_df['Timestamp'].max() - batch_df['Timestamp'].min()).total_seconds() / 60.0
+        ramp_steam_kg = local_df['steam_kg_incremental'].sum() # Assume all was ramp/unstable
+        ramp_duration_min = (local_df['Timestamp'].max() - local_df['Timestamp'].min()).total_seconds() / 60.0
         status = "Not Stabilized"
 
-    total_steam_kg = batch_df['steam_kg_incremental'].sum()
+    total_steam_kg = local_df['steam_kg_incremental'].sum()
     
     return {
         "ramp_steam_kg": ramp_steam_kg,
         "total_steam_kg": total_steam_kg,
         "ramp_duration": ramp_duration_min,
         "status": status,
-        "stable_idx": stable_start_idx
+        "stable_ts": stable_timestamp # Return Timestamp directly to avoid index mismatch
     }
 
 # --- 3. MAIN APPLICATION ---
@@ -185,8 +189,9 @@ def main():
     if selected_batch_id is None:
         st.stop()
 
-    # Process specific batch data
+    # Process specific batch data - Ensure it's sorted for plotting
     batch_data = df[df['batch_id'] == selected_batch_id].copy()
+    batch_data = batch_data.sort_values('Timestamp')
     
     # Calculate KPIs
     metrics = calculate_ramp_up_metrics(batch_data)
@@ -246,10 +251,9 @@ def main():
                                  mode='lines', line=dict(color=c_temp, width=2),
                                  name='Process Temp'), row=1, col=1)
         
-        # Add a marker/line for stabilization point if found
-        if metrics['stable_idx'] is not None:
-             stable_time = batch_data.loc[metrics['stable_idx'], 'Timestamp']
-             fig.add_vline(x=stable_time, line_width=1, line_dash="dash", line_color="green", row="all")
+        # Add a marker/line for stabilization point if found using TIMESTAMP
+        if metrics['stable_ts'] is not None:
+             fig.add_vline(x=metrics['stable_ts'], line_width=2, line_dash="dash", line_color="green", row="all")
 
         # 2. Pressure
         fig.add_trace(go.Scatter(x=batch_data['Timestamp'], y=batch_data['Pressure SP'],
