@@ -59,6 +59,13 @@ st.markdown("""
         font-size: 24px;
         font-weight: 800;
         color: #1E3A8A;
+        margin-bottom: 0px;
+    }
+    .metric-subvalue {
+        font-size: 14px;
+        color: #718096;
+        font-weight: 500;
+        margin-bottom: 5px;
     }
     .metric-label {
         font-size: 14px;
@@ -195,6 +202,10 @@ def calculate_stability_kpis(batch_df):
     pct_10 = 0.0
     pct_15 = 0.0
     
+    min_05 = 0.0
+    min_10 = 0.0
+    min_15 = 0.0
+    
     if stable_start_idx is not None and total_duration > 0:
         # Get Production Phase Data
         post_transition_df = local_df.loc[stable_start_idx:].copy()
@@ -207,19 +218,22 @@ def calculate_stability_kpis(batch_df):
             count_15 = (post_transition_df['sp_error'] <= 1.5).sum()
             
             # Minutes Stable
-            stable_min_05 = (count_05 / total_points) * phase_duration
-            stable_min_10 = (count_10 / total_points) * phase_duration
-            stable_min_15 = (count_15 / total_points) * phase_duration
+            min_05 = (count_05 / total_points) * phase_duration
+            min_10 = (count_10 / total_points) * phase_duration
+            min_15 = (count_15 / total_points) * phase_duration
             
             # Percent of Total Batch
-            pct_05 = (stable_min_05 / total_duration) * 100
-            pct_10 = (stable_min_10 / total_duration) * 100
-            pct_15 = (stable_min_15 / total_duration) * 100
+            pct_05 = (min_05 / total_duration) * 100
+            pct_10 = (min_10 / total_duration) * 100
+            pct_15 = (min_15 / total_duration) * 100
             
     return {
         "pct_05": pct_05,
         "pct_10": pct_10,
-        "pct_15": pct_15
+        "pct_15": pct_15,
+        "min_05": min_05,
+        "min_10": min_10,
+        "min_15": min_15
     }
 
 # --- 3. MAIN APPLICATION ---
@@ -281,11 +295,26 @@ def main():
     s1, s2, s3 = st.columns(3)
     
     with s1:
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_05']:.1f}%</div><div class="metric-label">Time within ±0.5°C</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{stab_kpis['pct_05']:.1f}%</div>
+            <div class="metric-subvalue">({stab_kpis['min_05']:.1f} mins)</div>
+            <div class="metric-label">Time within ±0.5°C</div>
+        </div>""", unsafe_allow_html=True)
     with s2:
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_10']:.1f}%</div><div class="metric-label">Time within ±1.0°C </div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{stab_kpis['pct_10']:.1f}%</div>
+            <div class="metric-subvalue">({stab_kpis['min_10']:.1f} mins)</div>
+            <div class="metric-label">Time within ±1.0°C (SOPT)</div>
+        </div>""", unsafe_allow_html=True)
     with s3:
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_15']:.1f}%</div><div class="metric-label">Time within ±1.5°C</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{stab_kpis['pct_15']:.1f}%</div>
+            <div class="metric-subvalue">({stab_kpis['min_15']:.1f} mins)</div>
+            <div class="metric-label">Time within ±1.5°C</div>
+        </div>""", unsafe_allow_html=True)
 
     st.markdown("---")
 
