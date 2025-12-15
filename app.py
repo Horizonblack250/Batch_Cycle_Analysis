@@ -165,6 +165,63 @@ def calculate_ramp_up_metrics(batch_df):
         "stable_ts": stable_timestamp # Return Timestamp directly to avoid index mismatch
     }
 
+def calculate_stability_kpis(batch_df):
+    """
+    Calculates the % of the batch spent within 0.5, 1.0, and 1.5 degrees of SP.
+    Only counts data AFTER the first stabilization (Transition Phase excluded).
+    """
+    local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
+    
+    start_time = local_df['Timestamp'].min()
+    end_time = local_df['Timestamp'].max()
+    total_duration = (end_time - start_time).total_seconds() / 60.0
+    
+    # 1. Anchor Stability Logic (±1.0°C for > 10 mins to find start)
+    local_df['sp_error'] = (local_df['Process Temp'] - local_df['Process Temp SP']).abs()
+    local_df['in_anchor_spec'] = local_df['sp_error'] <= 1.0
+    local_df['block'] = (local_df['in_anchor_spec'] != local_df['in_anchor_spec'].shift()).cumsum()
+    
+    stable_start_idx = None
+    
+    spec_blocks = local_df[local_df['in_anchor_spec']].groupby('block')
+    for _, group in spec_blocks:
+        g_duration = (group['Timestamp'].max() - group['Timestamp'].min()).total_seconds() / 60.0
+        if g_duration >= 10.0:
+            stable_start_idx = group.index[0]
+            break
+            
+    # 2. Metrics
+    pct_05 = 0.0
+    pct_10 = 0.0
+    pct_15 = 0.0
+    
+    if stable_start_idx is not None and total_duration > 0:
+        # Get Production Phase Data
+        post_transition_df = local_df.loc[stable_start_idx:].copy()
+        phase_duration = (post_transition_df['Timestamp'].max() - post_transition_df['Timestamp'].min()).total_seconds() / 60.0
+        total_points = len(post_transition_df)
+        
+        if total_points > 0:
+            count_05 = (post_transition_df['sp_error'] <= 0.5).sum()
+            count_10 = (post_transition_df['sp_error'] <= 1.0).sum()
+            count_15 = (post_transition_df['sp_error'] <= 1.5).sum()
+            
+            # Minutes Stable
+            stable_min_05 = (count_05 / total_points) * phase_duration
+            stable_min_10 = (count_10 / total_points) * phase_duration
+            stable_min_15 = (count_15 / total_points) * phase_duration
+            
+            # Percent of Total Batch
+            pct_05 = (stable_min_05 / total_duration) * 100
+            pct_10 = (stable_min_10 / total_duration) * 100
+            pct_15 = (stable_min_15 / total_duration) * 100
+            
+    return {
+        "pct_05": pct_05,
+        "pct_10": pct_10,
+        "pct_15": pct_15
+    }
+
 # --- 3. MAIN APPLICATION ---
 def main():
     st.title("QualSteam Real Dairy Complete Batch Cycle (SOPT Included)")
@@ -195,6 +252,7 @@ def main():
     
     # Calculate KPIs
     metrics = calculate_ramp_up_metrics(batch_data)
+    stab_kpis = calculate_stability_kpis(batch_data)
     
     start_time = batch_data['Timestamp'].min()
     end_time = batch_data['Timestamp'].max()
@@ -202,7 +260,8 @@ def main():
     date_str = start_time.strftime('%Y-%m-%d')
     time_str = start_time.strftime('%H:%M')
 
-    # --- TOP KPI ROW ---
+    # --- ROW 1: General & Steam KPIs ---
+    st.subheader("General KPIs")
     c1, c2, c3, c4, c5 = st.columns(5)
     
     with c1:
@@ -216,6 +275,17 @@ def main():
     with c5:
         color = "#166534" if metrics['status'] == "Stabilized" else "#991b1b"
         st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:{color}">{metrics['ramp_duration']:.1f} min</div><div class="metric-label">Ramp-Up Time</div></div>""", unsafe_allow_html=True)
+
+    # --- ROW 2: Stability Performance KPIs ---
+    st.subheader("Stability Performance")
+    s1, s2, s3 = st.columns(3)
+    
+    with s1:
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_05']:.1f}%</div><div class="metric-label">Time within ±0.5°C</div></div>""", unsafe_allow_html=True)
+    with s2:
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_10']:.1f}%</div><div class="metric-label">Time within ±1.0°C (SOPT)</div></div>""", unsafe_allow_html=True)
+    with s3:
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_15']:.1f}%</div><div class="metric-label">Time within ±1.5°C</div></div>""", unsafe_allow_html=True)
 
     st.markdown("---")
 
