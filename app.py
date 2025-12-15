@@ -283,7 +283,7 @@ def main():
     with s1:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_05']:.1f}%</div><div class="metric-label">Time within ±0.5°C</div></div>""", unsafe_allow_html=True)
     with s2:
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_10']:.1f}%</div><div class="metric-label">Time within ±1.0°C (SOPT)</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_10']:.1f}%</div><div class="metric-label">Time within ±1.0°C </div></div>""", unsafe_allow_html=True)
     with s3:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{stab_kpis['pct_15']:.1f}%</div><div class="metric-label">Time within ±1.5°C</div></div>""", unsafe_allow_html=True)
 
