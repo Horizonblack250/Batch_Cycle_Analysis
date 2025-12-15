@@ -306,7 +306,7 @@ def main():
         <div class="metric-card">
             <div class="metric-value">{stab_kpis['pct_10']:.1f}%</div>
             <div class="metric-subvalue">({stab_kpis['min_10']:.1f} mins)</div>
-            <div class="metric-label">Time within ±1.0°C (SOPT)</div>
+            <div class="metric-label">Time within ±1.0°C </div>
         </div>""", unsafe_allow_html=True)
     with s3:
         st.markdown(f"""
