@@ -255,18 +255,13 @@ def calculate_stability_kpis(batch_df):
 
 def calculate_savings_potential(batch_df):
     """
-    Calculates 'Waste' steam using refined logic:
-    1. Determine Baseline Flow (Avg flow when Temp is within +/- 1.0 deg).
-    2. Check each datapoint (Post-Ramp).
-    3. If datapoint is within +/- 1.5 deg -> Good (0 Waste).
-    4. If datapoint is outside +/- 1.5 deg -> Problem. 
-       Waste = (Actual Flow - Baseline Flow) * dt.
+    Calculates 'Waste' steam: Actual Flow - Ideal Baseline Flow
+    during periods of instability (> +/- 1.5 deg).
     """
     local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
     target_sp = local_df['Process Temp SP'].max()
     
-    # 1. Determine Baseline Flow (Cruising speed at +/- 1.0 deg)
-    # Using mask on the WHOLE batch to find stable periods
+    # 1. Determine Baseline Flow
     stable_mask = (local_df['Process Temp'] - target_sp).abs() <= 1.0
     
     if stable_mask.sum() > 5:
@@ -301,13 +296,48 @@ def calculate_savings_potential(batch_df):
         problem_df = prod_df[problem_mask].copy()
         
         # Calculate Excess Flow (Actual - Baseline)
-        # We only count it as waste if Actual > Baseline. 
-        # If Actual < Baseline (e.g. temp is high so valve closed), waste is 0.
         excess_flow = (problem_df['Steam Flow Rate'] - baseline_flow).clip(lower=0)
         
         waste_kg = (excess_flow * problem_df['dt_hours']).sum()
         
     return waste_kg
+
+def calculate_condensing_capacity(batch_df):
+    """
+    Calculates the Average Condensing Capacity (UA) in kW/K.
+    UA = Heat Duty / Driving Force (Delta T)
+    Includes filter for active valve (>10%) to ignore idle periods.
+    """
+    # Create local copy
+    local_df = batch_df.copy()
+    
+    # 1. Calculate Steam Temp from P2 (bar gauge)
+    # T_steam approx 100 * (P_abs)^0.25
+    p_abs = local_df['Outlet Steam Pressure'] + 1.01325
+    local_df['T_steam'] = np.power(p_abs, 0.25) * 100.0
+    
+    # 2. Calculate Latent Heat (h_fg)
+    local_df['h_fg'] = 2257 - 4.18 * (local_df['T_steam'] - 100)
+    
+    # 3. Calculate Heat Duty (Q) in kW
+    local_df['Q_kw'] = (local_df['Steam Flow Rate'] * local_df['h_fg']) / 3600.0
+    
+    # 4. Calculate Driving Force (Delta T)
+    local_df['Delta_T'] = local_df['T_steam'] - local_df['Process Temp']
+    
+    # 5. Calculate UA (kW/K)
+    # Filter: Delta T must be > 1 to avoid infinity
+    # Filter: Valve must be > 10% to ensure active process
+    
+    valid_mask = (local_df['Delta_T'] > 1.0) & (local_df['QualSteam Valve Opening'] > 10)
+    
+    if valid_mask.sum() > 0:
+        ua_values = local_df.loc[valid_mask, 'Q_kw'] / local_df.loc[valid_mask, 'Delta_T']
+        avg_ua = ua_values.mean()
+    else:
+        avg_ua = 0.0
+        
+    return avg_ua
 
 @st.cache_data
 def calculate_global_savings(df):
@@ -323,7 +353,7 @@ def calculate_global_savings(df):
 
 # --- 3. MAIN APPLICATION ---
 def main():
-    st.title("QualSteam Real Dairy Complete Batch Cycle (SOPT Included)")
+    st.title("QualSteam Real Dairy Complete Batch Analysis")
 
     df = load_data()
 
@@ -364,6 +394,7 @@ def main():
     overshoot_steam = calculate_overshoot_steam(batch_data)
     stab_kpis = calculate_stability_kpis(batch_data)
     waste_kg = calculate_savings_potential(batch_data)
+    ua_val = calculate_condensing_capacity(batch_data) # NEW METRIC
     
     start_time = batch_data['Timestamp'].min()
     end_time = batch_data['Timestamp'].max()
@@ -371,13 +402,13 @@ def main():
     date_str = start_time.strftime('%Y-%m-%d')
 
     # --- HEADER INFO ---
-    st.markdown(f"###  Batch Date: {date_str}")
+    st.markdown(f"### 📅 Batch Date: {date_str}")
 
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
     
-    # Updated to 5 columns (Removed Date Card)
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # Updated to 6 columns
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     
     with c1:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{total_duration:.1f} min</div><div class="metric-label">Total Duration</div></div>""", unsafe_allow_html=True)
@@ -386,9 +417,12 @@ def main():
     with c3:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{metrics['total_steam_kg']:.1f} kg</div><div class="metric-label">Total Steam</div></div>""", unsafe_allow_html=True)
     with c4:
-        # POTENTIAL SAVINGS KPI - Updated Label
+        # POTENTIAL SAVINGS KPI
         st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#D32F2F">{waste_kg:.1f} kg</div><div class="metric-label">Potential Savings (Approx)</div></div>""", unsafe_allow_html=True)
     with c5:
+        # NEW UA KPI
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{ua_val:.2f} kW/K</div><div class="metric-label">Avg Condensing Capacity</div></div>""", unsafe_allow_html=True)
+    with c6:
         color = "#166534" if metrics['status'] == "Stabilized" else "#991b1b"
         st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:{color}">{metrics['ramp_duration']:.1f} min</div><div class="metric-label">Ramp-Up Time</div></div>""", unsafe_allow_html=True)
 
