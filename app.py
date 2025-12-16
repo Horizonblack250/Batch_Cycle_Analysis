@@ -12,8 +12,9 @@ st.set_page_config(
 )
 
 # --- FINANCIAL CONSTANTS ---
-COAL_PRICE_PER_KG = 1.9  # Avg of 1.5 to 2.3 INR
-STEAM_TO_COAL_RATIO = 5.0 # Standard estimate: 1 kg coal produces 5 kg steam
+# UPDATED: Using direct Steam Cost based on user input
+# User logic: 13700 kg steam * 2.3 = ~30k INR
+STEAM_COST_PER_KG = 2.3  # INR per kg of Steam
 
 # Custom CSS for Visibility and Contrast
 st.markdown("""
@@ -380,9 +381,8 @@ def main():
     global_savings_tonnes = calculate_global_savings(df)
     
     # Convert Global Steam Tonnes to Rupees
-    # 1 Tonne Steam = 1000 kg. Coal Ratio = 5. Coal Cost = 1.9.
-    global_coal_tonnes = global_savings_tonnes / STEAM_TO_COAL_RATIO
-    global_cost_inr = global_coal_tonnes * 1000 * COAL_PRICE_PER_KG
+    # Logic: 1 Tonne Steam * 1000 kg/T * Price/kg
+    global_cost_inr = global_savings_tonnes * 1000 * STEAM_COST_PER_KG
     
     st.sidebar.info(f"""
     **Total Batches:** {total_batches}
@@ -392,7 +392,7 @@ def main():
     
     **Potential Cost Savings (Approx):**
     # ₹ {global_cost_inr:,.0f}
-    *(Based on {COAL_PRICE_PER_KG} INR/kg Coal)*
+    *(Based on {STEAM_COST_PER_KG} INR per kg of Steam)*
     """)
     
     st.sidebar.markdown("---")
@@ -415,9 +415,8 @@ def main():
     waste_kg = calculate_savings_potential(batch_data)
     ua_val = calculate_condensing_capacity(batch_data)
     
-    # Calculate Batch Financials
-    batch_coal_kg = waste_kg / STEAM_TO_COAL_RATIO
-    batch_cost_inr = batch_coal_kg * COAL_PRICE_PER_KG
+    # Calculate Batch Financials (Direct multiplication)
+    batch_cost_inr = waste_kg * STEAM_COST_PER_KG
     
     start_time = batch_data['Timestamp'].min()
     end_time = batch_data['Timestamp'].max()
@@ -425,7 +424,7 @@ def main():
     date_str = start_time.strftime('%Y-%m-%d')
 
     # --- HEADER INFO ---
-    st.markdown(f"###  Batch Date: {date_str}")
+    st.markdown(f"### Batch Date: {date_str}")
 
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
