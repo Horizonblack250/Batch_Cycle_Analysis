@@ -311,7 +311,7 @@ def calculate_savings_potential(batch_df):
 
 @st.cache_data
 def calculate_global_savings(df):
-    """Calculates total potential savings across all batches in Tonnes"""
+    """Calculates total potential savings across all batches in Tonnes (Approx) """
     total_savings_kg = 0.0
     unique_batches = df['batch_id'].unique()
     
