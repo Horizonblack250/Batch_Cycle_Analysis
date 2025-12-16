@@ -255,18 +255,24 @@ def calculate_stability_kpis(batch_df):
 
 def calculate_savings_potential(batch_df):
     """
-    Calculates 'Waste' steam: Actual Flow - Ideal Baseline Flow
-    during periods of instability (> +/- 1.5 deg).
+    Calculates 'Waste' steam using refined logic:
+    1. Determine Baseline Flow (Avg flow when Temp is within +/- 1.0 deg).
+    2. Check each datapoint (Post-Ramp).
+    3. If datapoint is within +/- 1.5 deg -> Good (0 Waste).
+    4. If datapoint is outside +/- 1.5 deg -> Problem. 
+       Waste = (Actual Flow - Baseline Flow) * dt.
     """
     local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
     target_sp = local_df['Process Temp SP'].max()
     
-    # 1. Determine Baseline Flow
+    # 1. Determine Baseline Flow (Cruising speed at +/- 1.0 deg)
+    # Using mask on the WHOLE batch to find stable periods
     stable_mask = (local_df['Process Temp'] - target_sp).abs() <= 1.0
+    
     if stable_mask.sum() > 5:
         baseline_flow = local_df.loc[stable_mask, 'Steam Flow Rate'].mean()
     else:
-        # Fallback to median if never stable
+        # Fallback to median if never stable within 1.0
         baseline_flow = local_df['Steam Flow Rate'].median()
         
     if pd.isna(baseline_flow): baseline_flow = 0
@@ -278,25 +284,42 @@ def calculate_savings_potential(batch_df):
     start_idx = reached_sp.idxmax()
     prod_df = local_df.loc[start_idx:].copy()
     
-    # 3. Identify Unstable Periods (> 1.5 deg)
+    if prod_df.empty: return 0.0
+
+    # 3. Calculate Waste Row-by-Row
+    prod_df['dt_hours'] = prod_df['Timestamp'].diff().dt.total_seconds() / 3600.0
+    prod_df['dt_hours'] = prod_df['dt_hours'].fillna(0)
+    
     prod_df['error'] = (prod_df['Process Temp'] - target_sp).abs()
-    unstable_df = prod_df[prod_df['error'] > 1.5].copy()
+    
+    # Identify "Problem" Points (> +/- 1.5 deg)
+    problem_mask = prod_df['error'] > 1.5
     
     waste_kg = 0.0
     
-    if not unstable_df.empty:
-        # Calculate time delta for unstable rows
-        unstable_df['dt_hours'] = unstable_df['Timestamp'].diff().dt.total_seconds() / 3600.0
-        # Fix first row diff if needed (though usually diff exists from main df context)
-        # Safe approach: if dt is NaN, assume 0
-        unstable_df['dt_hours'] = unstable_df['dt_hours'].fillna(0)
+    if problem_mask.any():
+        problem_df = prod_df[problem_mask].copy()
         
-        # Calculate Excess Flow (Only count if positive)
-        excess_flow = (unstable_df['Steam Flow Rate'] - baseline_flow).clip(lower=0)
+        # Calculate Excess Flow (Actual - Baseline)
+        # We only count it as waste if Actual > Baseline. 
+        # If Actual < Baseline (e.g. temp is high so valve closed), waste is 0.
+        excess_flow = (problem_df['Steam Flow Rate'] - baseline_flow).clip(lower=0)
         
-        waste_kg = (excess_flow * unstable_df['dt_hours']).sum()
+        waste_kg = (excess_flow * problem_df['dt_hours']).sum()
         
     return waste_kg
+
+@st.cache_data
+def calculate_global_savings(df):
+    """Calculates total potential savings across all batches in Tonnes"""
+    total_savings_kg = 0.0
+    unique_batches = df['batch_id'].unique()
+    
+    for bid in unique_batches:
+        batch_data = df[df['batch_id'] == bid]
+        total_savings_kg += calculate_savings_potential(batch_data)
+        
+    return total_savings_kg / 1000.0 # Convert to Tonnes
 
 # --- 3. MAIN APPLICATION ---
 def main():
@@ -311,7 +334,17 @@ def main():
     # --- SIDEBAR ---
     st.sidebar.header("Dataset Overview")
     total_batches = df['batch_id'].nunique()
-    st.sidebar.info(f"**Total Batches Available:** {total_batches}")
+    
+    # Calculate Global Savings
+    global_savings_tonnes = calculate_global_savings(df)
+    
+    st.sidebar.info(f"""
+    **Total Batches:** {total_batches}
+    
+    **Overall Potential Savings:**
+    # {global_savings_tonnes:.2f} Tonnes
+    *(Based on eliminating deviations > ±1.5°C)*
+    """)
     
     st.sidebar.markdown("---")
     st.sidebar.header("Batch Selection")
@@ -328,7 +361,7 @@ def main():
     
     # Calculate KPIs
     metrics = calculate_ramp_up_metrics(batch_data)
-    overshoot_steam = calculate_overshoot_steam(batch_data) # NEW METRIC
+    overshoot_steam = calculate_overshoot_steam(batch_data)
     stab_kpis = calculate_stability_kpis(batch_data)
     waste_kg = calculate_savings_potential(batch_data)
     
@@ -340,7 +373,6 @@ def main():
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
     
-    # Updated to 6 columns
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     
     with c1:
@@ -348,7 +380,6 @@ def main():
     with c2:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{total_duration:.1f} min</div><div class="metric-label">Total Duration</div></div>""", unsafe_allow_html=True)
     with c3:
-        # REPLACED Ramp-Up with Overshoot Steam
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{overshoot_steam:.1f} kg</div><div class="metric-label">Overshoot Steam Consumed</div></div>""", unsafe_allow_html=True)
     with c4:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{metrics['total_steam_kg']:.1f} kg</div><div class="metric-label">Total Steam</div></div>""", unsafe_allow_html=True)
