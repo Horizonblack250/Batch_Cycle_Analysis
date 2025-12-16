@@ -392,7 +392,7 @@ def main():
     
     **Potential Cost Savings (Approx):**
     # ₹ {global_cost_inr:,.0f}
-    *(Based on {STEAM_COST_PER_KG} INR per kg of Steam)*
+    *(Based on {STEAM_COST_PER_KG} INR per kg of Steam(Monthly))*
     """)
     
     st.sidebar.markdown("---")
