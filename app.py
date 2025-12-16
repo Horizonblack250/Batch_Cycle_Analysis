@@ -109,8 +109,7 @@ def calculate_stats(series):
 
 def calculate_ramp_up_metrics(batch_df):
     """
-    Calculates steam consumption during ramp-up.
-    Logic: Ramp-up ends when process is +-1 degree of SP for > 1 minute.
+    Calculates metrics for the ramp-up phase and total steam.
     """
     local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
     
@@ -137,23 +136,64 @@ def calculate_ramp_up_metrics(batch_df):
             
     if stable_start_idx is not None:
         ramp_up_df = local_df.iloc[:stable_start_idx+1]
-        ramp_steam_kg = ramp_up_df['steam_kg_incremental'].sum()
         ramp_duration_min = (ramp_up_df['Timestamp'].max() - ramp_up_df['Timestamp'].min()).total_seconds() / 60.0
         status = "Stabilized"
     else:
-        ramp_steam_kg = local_df['steam_kg_incremental'].sum()
         ramp_duration_min = (local_df['Timestamp'].max() - local_df['Timestamp'].min()).total_seconds() / 60.0
         status = "Not Stabilized"
 
     total_steam_kg = local_df['steam_kg_incremental'].sum()
     
     return {
-        "ramp_steam_kg": ramp_steam_kg,
         "total_steam_kg": total_steam_kg,
         "ramp_duration": ramp_duration_min,
         "status": status,
         "stable_ts": stable_timestamp
     }
+
+def calculate_overshoot_steam(batch_df):
+    """
+    Calculates steam consumed specifically during the Overshoot Phase.
+    Start: First time Temp >= Setpoint
+    End: Start of Stability (first 10 min block within +/- 1.0 deg)
+    """
+    local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
+    target_sp = local_df['Process Temp SP'].max()
+    
+    # 1. Find Start (Reaching SP)
+    reached_sp = local_df['Process Temp'] >= target_sp
+    if not reached_sp.any():
+        return 0.0 # Never reached setpoint
+        
+    start_idx = reached_sp.idxmax()
+    
+    # 2. Find End (Stability)
+    local_df['sp_error'] = (local_df['Process Temp'] - local_df['Process Temp SP']).abs()
+    local_df['in_spec'] = local_df['sp_error'] <= 1.0
+    blocks = (local_df['in_spec'] != local_df['in_spec'].shift()).cumsum()
+    
+    end_idx = None
+    
+    spec_blocks = local_df[local_df['in_spec']].groupby(blocks)
+    for _, group in spec_blocks:
+        g_duration = (group['Timestamp'].max() - group['Timestamp'].min()).total_seconds() / 60.0
+        # Look for stability occurring AFTER or AT the start of overshoot
+        if g_duration >= 10.0 and group.index[0] >= start_idx:
+            end_idx = group.index[0]
+            break
+            
+    if end_idx is None:
+        return 0.0 # Never stabilized after overshoot
+        
+    # 3. Integrate Steam for this window
+    overshoot_df = local_df.loc[start_idx : end_idx].copy()
+    
+    overshoot_df['dt_hours'] = overshoot_df['Timestamp'].diff().dt.total_seconds() / 3600.0
+    overshoot_df['dt_hours'] = overshoot_df['dt_hours'].fillna(0)
+    
+    overshoot_steam_kg = (overshoot_df['Steam Flow Rate'] * overshoot_df['dt_hours']).sum()
+    
+    return overshoot_steam_kg
 
 def calculate_stability_kpis(batch_df):
     """
@@ -288,6 +328,7 @@ def main():
     
     # Calculate KPIs
     metrics = calculate_ramp_up_metrics(batch_data)
+    overshoot_steam = calculate_overshoot_steam(batch_data) # NEW METRIC
     stab_kpis = calculate_stability_kpis(batch_data)
     waste_kg = calculate_savings_potential(batch_data)
     
@@ -299,7 +340,7 @@ def main():
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
     
-    # Updated to 6 columns to include Savings
+    # Updated to 6 columns
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     
     with c1:
@@ -307,7 +348,8 @@ def main():
     with c2:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{total_duration:.1f} min</div><div class="metric-label">Total Duration</div></div>""", unsafe_allow_html=True)
     with c3:
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{metrics['ramp_steam_kg']:.1f} kg</div><div class="metric-label">Ramp-Up Steam</div></div>""", unsafe_allow_html=True)
+        # REPLACED Ramp-Up with Overshoot Steam
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{overshoot_steam:.1f} kg</div><div class="metric-label">Overshoot Steam Consumed</div></div>""", unsafe_allow_html=True)
     with c4:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{metrics['total_steam_kg']:.1f} kg</div><div class="metric-label">Total Steam</div></div>""", unsafe_allow_html=True)
     with c5:
