@@ -311,7 +311,7 @@ def calculate_savings_potential(batch_df):
 
 @st.cache_data
 def calculate_global_savings(df):
-    """Calculates total potential savings across all batches in Tonnes (Approx) """
+    """Calculates total potential savings across all batches in Tonnes"""
     total_savings_kg = 0.0
     unique_batches = df['batch_id'].unique()
     
@@ -341,7 +341,7 @@ def main():
     st.sidebar.info(f"""
     **Total Batches:** {total_batches}
     
-    **Overall Potential Savings:**
+    **Overall Potential Savings (Approx):**
     # {global_savings_tonnes:.2f} Tonnes
     *(Based on eliminating deviations > ±1.5°C)*
     """)
@@ -370,23 +370,25 @@ def main():
     total_duration = (end_time - start_time).total_seconds() / 60.0
     date_str = start_time.strftime('%Y-%m-%d')
 
+    # --- HEADER INFO ---
+    st.markdown(f"### 📅 Batch Date: {date_str}")
+
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
     
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    # Updated to 5 columns (Removed Date Card)
+    c1, c2, c3, c4, c5 = st.columns(5)
     
     with c1:
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{date_str}</div><div class="metric-label">Batch Date</div></div>""", unsafe_allow_html=True)
-    with c2:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{total_duration:.1f} min</div><div class="metric-label">Total Duration</div></div>""", unsafe_allow_html=True)
-    with c3:
+    with c2:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{overshoot_steam:.1f} kg</div><div class="metric-label">Overshoot Steam Consumed</div></div>""", unsafe_allow_html=True)
-    with c4:
+    with c3:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{metrics['total_steam_kg']:.1f} kg</div><div class="metric-label">Total Steam</div></div>""", unsafe_allow_html=True)
+    with c4:
+        # POTENTIAL SAVINGS KPI - Updated Label
+        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#D32F2F">{waste_kg:.1f} kg</div><div class="metric-label">Potential Savings (Approx)</div></div>""", unsafe_allow_html=True)
     with c5:
-        # POTENTIAL SAVINGS KPI
-        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#D32F2F">{waste_kg:.1f} kg</div><div class="metric-label">Potential Savings</div></div>""", unsafe_allow_html=True)
-    with c6:
         color = "#166534" if metrics['status'] == "Stabilized" else "#991b1b"
         st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:{color}">{metrics['ramp_duration']:.1f} min</div><div class="metric-label">Ramp-Up Time</div></div>""", unsafe_allow_html=True)
 
