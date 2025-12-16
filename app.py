@@ -11,6 +11,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# --- FINANCIAL CONSTANTS ---
+COAL_PRICE_PER_KG = 1.9  # Avg of 1.5 to 2.3 INR
+STEAM_TO_COAL_RATIO = 5.0 # Standard estimate: 1 kg coal produces 5 kg steam
+
 # Custom CSS for Visibility and Contrast
 st.markdown("""
     <style>
@@ -255,13 +259,18 @@ def calculate_stability_kpis(batch_df):
 
 def calculate_savings_potential(batch_df):
     """
-    Calculates 'Waste' steam: Actual Flow - Ideal Baseline Flow
-    during periods of instability (> +/- 1.5 deg).
+    Calculates 'Waste' steam using refined logic:
+    1. Determine Baseline Flow (Avg flow when Temp is within +/- 1.0 deg).
+    2. Check each datapoint (Post-Ramp).
+    3. If datapoint is within +/- 1.5 deg -> Good (0 Waste).
+    4. If datapoint is outside +/- 1.5 deg -> Problem. 
+       Waste = (Actual Flow - Baseline Flow) * dt.
     """
     local_df = batch_df.sort_values('Timestamp').reset_index(drop=True)
     target_sp = local_df['Process Temp SP'].max()
     
-    # 1. Determine Baseline Flow
+    # 1. Determine Baseline Flow (Cruising speed at +/- 1.0 deg)
+    # Using mask on the WHOLE batch to find stable periods
     stable_mask = (local_df['Process Temp'] - target_sp).abs() <= 1.0
     
     if stable_mask.sum() > 5:
@@ -296,6 +305,8 @@ def calculate_savings_potential(batch_df):
         problem_df = prod_df[problem_mask].copy()
         
         # Calculate Excess Flow (Actual - Baseline)
+        # We only count it as waste if Actual > Baseline. 
+        # If Actual < Baseline (e.g. temp is high so valve closed), waste is 0.
         excess_flow = (problem_df['Steam Flow Rate'] - baseline_flow).clip(lower=0)
         
         waste_kg = (excess_flow * problem_df['dt_hours']).sum()
@@ -368,12 +379,20 @@ def main():
     # Calculate Global Savings
     global_savings_tonnes = calculate_global_savings(df)
     
+    # Convert Global Steam Tonnes to Rupees
+    # 1 Tonne Steam = 1000 kg. Coal Ratio = 5. Coal Cost = 1.9.
+    global_coal_tonnes = global_savings_tonnes / STEAM_TO_COAL_RATIO
+    global_cost_inr = global_coal_tonnes * 1000 * COAL_PRICE_PER_KG
+    
     st.sidebar.info(f"""
     **Total Batches:** {total_batches}
     
-    **Overall Potential Savings (Approx):**
+    **Overall Potential Steam Savings:**
     # {global_savings_tonnes:.2f} Tonnes
-    *(Based on eliminating deviations > ±1.5°C)*
+    
+    **Potential Cost Savings (Approx):**
+    # ₹ {global_cost_inr:,.0f}
+    *(Based on {COAL_PRICE_PER_KG} INR/kg Coal)*
     """)
     
     st.sidebar.markdown("---")
@@ -394,7 +413,11 @@ def main():
     overshoot_steam = calculate_overshoot_steam(batch_data)
     stab_kpis = calculate_stability_kpis(batch_data)
     waste_kg = calculate_savings_potential(batch_data)
-    ua_val = calculate_condensing_capacity(batch_data) # NEW METRIC
+    ua_val = calculate_condensing_capacity(batch_data)
+    
+    # Calculate Batch Financials
+    batch_coal_kg = waste_kg / STEAM_TO_COAL_RATIO
+    batch_cost_inr = batch_coal_kg * COAL_PRICE_PER_KG
     
     start_time = batch_data['Timestamp'].min()
     end_time = batch_data['Timestamp'].max()
@@ -402,7 +425,7 @@ def main():
     date_str = start_time.strftime('%Y-%m-%d')
 
     # --- HEADER INFO ---
-    st.markdown(f"###  Batch Date: {date_str}")
+    st.markdown(f"### 📅 Batch Date: {date_str}")
 
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
@@ -417,14 +440,14 @@ def main():
     with c3:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{metrics['total_steam_kg']:.1f} kg</div><div class="metric-label">Total Steam</div></div>""", unsafe_allow_html=True)
     with c4:
-        # POTENTIAL SAVINGS KPI
-        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#D32F2F">{waste_kg:.1f} kg</div><div class="metric-label">Potential Savings (Approx)</div></div>""", unsafe_allow_html=True)
+        # STEAM SAVINGS
+        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#D32F2F">{waste_kg:.1f} kg</div><div class="metric-label">Potential Steam Savings</div></div>""", unsafe_allow_html=True)
     with c5:
-        # NEW UA KPI
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{ua_val:.2f} kW/K</div><div class="metric-label">Avg Condensing Capacity</div></div>""", unsafe_allow_html=True)
+        # COST SAVINGS (NEW)
+        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#2E7D32">₹ {batch_cost_inr:.0f}</div><div class="metric-label">Potential Cost Savings (Approx)</div></div>""", unsafe_allow_html=True)
     with c6:
-        color = "#166534" if metrics['status'] == "Stabilized" else "#991b1b"
-        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:{color}">{metrics['ramp_duration']:.1f} min</div><div class="metric-label">Ramp-Up Time</div></div>""", unsafe_allow_html=True)
+        # UA
+        st.markdown(f"""<div class="metric-card"><div class="metric-value">{ua_val:.2f} kW/K</div><div class="metric-label">Avg Condensing Capacity</div></div>""", unsafe_allow_html=True)
 
     # --- ROW 2: Stability Performance KPIs ---
     st.subheader("Stability Performance")
