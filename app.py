@@ -425,7 +425,7 @@ def main():
     date_str = start_time.strftime('%Y-%m-%d')
 
     # --- HEADER INFO ---
-    st.markdown(f"### 📅 Batch Date: {date_str}")
+    st.markdown(f"###  Batch Date: {date_str}")
 
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
