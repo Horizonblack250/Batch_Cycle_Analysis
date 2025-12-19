@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # --- FINANCIAL CONSTANTS ---
-# UPDATED: Using direct Steam Cost based on user input
+# Using direct Steam Cost based on user input
 # User logic: 13700 kg steam * 2.3 = ~30k INR
 STEAM_COST_PER_KG = 2.3  # INR per kg of Steam
 
@@ -314,43 +314,6 @@ def calculate_savings_potential(batch_df):
         
     return waste_kg
 
-def calculate_condensing_capacity(batch_df):
-    """
-    Calculates the Average Condensing Capacity (UA) in kW/K.
-    UA = Heat Duty / Driving Force (Delta T)
-    Includes filter for active valve (>10%) to ignore idle periods.
-    """
-    # Create local copy
-    local_df = batch_df.copy()
-    
-    # 1. Calculate Steam Temp from P2 (bar gauge)
-    # T_steam approx 100 * (P_abs)^0.25
-    p_abs = local_df['Outlet Steam Pressure'] + 1.01325
-    local_df['T_steam'] = np.power(p_abs, 0.25) * 100.0
-    
-    # 2. Calculate Latent Heat (h_fg)
-    local_df['h_fg'] = 2257 - 4.18 * (local_df['T_steam'] - 100)
-    
-    # 3. Calculate Heat Duty (Q) in kW
-    local_df['Q_kw'] = (local_df['Steam Flow Rate'] * local_df['h_fg']) / 3600.0
-    
-    # 4. Calculate Driving Force (Delta T)
-    local_df['Delta_T'] = local_df['T_steam'] - local_df['Process Temp']
-    
-    # 5. Calculate UA (kW/K)
-    # Filter: Delta T must be > 1 to avoid infinity
-    # Filter: Valve must be > 10% to ensure active process
-    
-    valid_mask = (local_df['Delta_T'] > 1.0) & (local_df['QualSteam Valve Opening'] > 10)
-    
-    if valid_mask.sum() > 0:
-        ua_values = local_df.loc[valid_mask, 'Q_kw'] / local_df.loc[valid_mask, 'Delta_T']
-        avg_ua = ua_values.mean()
-    else:
-        avg_ua = 0.0
-        
-    return avg_ua
-
 @st.cache_data
 def calculate_global_savings(df):
     """Calculates total potential savings across all batches in Tonnes"""
@@ -391,8 +354,8 @@ def main():
     # {global_savings_tonnes:.2f} Tonnes
     
     **Potential Cost Savings (Approx):**
-    # ₹ {global_cost_inr:,.0f}
-    *(Based on {STEAM_COST_PER_KG} INR per kg of Steam(Monthly))*
+    # INR {global_cost_inr:,.0f}
+    *(Based on {STEAM_COST_PER_KG} INR per kg of Steam)*
     """)
     
     st.sidebar.markdown("---")
@@ -413,7 +376,6 @@ def main():
     overshoot_steam = calculate_overshoot_steam(batch_data)
     stab_kpis = calculate_stability_kpis(batch_data)
     waste_kg = calculate_savings_potential(batch_data)
-    ua_val = calculate_condensing_capacity(batch_data)
     
     # Calculate Batch Financials (Direct multiplication)
     batch_cost_inr = waste_kg * STEAM_COST_PER_KG
@@ -429,8 +391,8 @@ def main():
     # --- ROW 1: General & Steam KPIs ---
     st.subheader("General KPIs")
     
-    # Updated to 6 columns
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    # Updated to 5 columns (Removed UA)
+    c1, c2, c3, c4, c5 = st.columns(5)
     
     with c1:
         st.markdown(f"""<div class="metric-card"><div class="metric-value">{total_duration:.1f} min</div><div class="metric-label">Total Duration</div></div>""", unsafe_allow_html=True)
@@ -443,10 +405,7 @@ def main():
         st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#D32F2F">{waste_kg:.1f} kg</div><div class="metric-label">Potential Steam Savings</div></div>""", unsafe_allow_html=True)
     with c5:
         # COST SAVINGS (NEW)
-        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#2E7D32">₹ {batch_cost_inr:.0f}</div><div class="metric-label">Potential Cost Savings (Approx)</div></div>""", unsafe_allow_html=True)
-    with c6:
-        # UA
-        st.markdown(f"""<div class="metric-card"><div class="metric-value">{ua_val:.2f} kW/K</div><div class="metric-label">Avg Condensing Capacity</div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="metric-card"><div class="metric-value" style="color:#2E7D32">INR {batch_cost_inr:.0f}</div><div class="metric-label">Potential Cost Savings (Approx)</div></div>""", unsafe_allow_html=True)
 
     # --- ROW 2: Stability Performance KPIs ---
     st.subheader("Stability Performance")
